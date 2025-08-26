@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block content %}
+
+  <!-- Hero -->
+  <section class="mb-8 md:mb-10">
+    <div class="glass border border-zinc-200 rounded-xl2 shadow-glow p-6 md:p-8 relative overflow-hidden">
+      <div class="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-ochre/30 blur-2xl animate-pulseSoft"></div>
+      <div class="absolute -bottom-28 -left-28 w-96 h-96 rounded-full bg-plum/20 blur-2xl animate-pulseSoft"></div>
+
+      <div class="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+        <div>
+          <h2 class="font-serif text-3xl md:text-4xl leading-tight">Dark humor meets gentle healing.</h2>
+          <p class="mt-2 text-zinc-700">Generate razor-sharp cards on demand. Screenshot, share, or print.</p>
+        </div>
+        <div class="text-sm bg-cream/70 border border-zinc-200 rounded-xl px-3 py-2 shadow-inner">
+          Free cards left today: <span class="font-semibold">{{ remaining }}</span>
+          <span class="text-zinc-500">
+            {% if session.get('email') %}(per account){% else %}(per IP){% endif %}
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Generator form -->
+  <form method="post" action="/generate"
+        class="glass border border-zinc-200 rounded-xl2 shadow-glow p-6 md:p-7"
+        onsubmit="this.querySelector('button[type=submit]').disabled=true">
+    <div class="grid md:grid-cols-3 gap-4">
+      <!-- Category -->
+      <div>
+        <label class="block text-sm font-medium mb-1">Category</label>
+        <select name="category" class="w-full border rounded-lg p-2 bg-white/80">
+          {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+
+      <!-- Tone -->
+      <div>
+        <label class="block text-sm font-medium mb-1">Tone</label>
+        <select name="tone" class="w-full border rounded-lg p-2 bg-white/80">
+          {% for t in tones or ['Classic','Sassy','Spicy','Extra Spicy'] %}
+            <option value="{{ t }}" {% if t =='Sassy' %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Theme -->
+      <div>
+        <label class="block text-sm font-medium mb-1">Optional theme</label>
+        <input name="theme" placeholder="e.g., fear of failure, Sunday scaries"
+               class="w-full border rounded-lg p-2 bg-white/80" />
+      </div>
+    </div>
+
+    <div class="mt-4 flex items-center gap-3">
+      <button type="submit" class="px-4 py-2 rounded-lg bg-ink text-white hover:opacity-90 shadow-glow">
+        Generate Card
+      </button>
+      <a href="/buy" class="text-sm underline decoration-dotted underline-offset-4">Upgrade</a>
+    </div>
+  </form>
+
+  <!-- Output -->
+  {% if last %}
+    {% set cat = (last.category or 'Trigger') | lower %}
+    {% set ring =
+      'ring-ochre/70' if cat=='trigger' else
+      'ring-moss/70' if cat=='coping' else
+      'ring-sky/70' if cat=='healing' else
+      'ring-plum/70' %}
+    {% set badge =
+      'bg-ochre/20 text-ink border-ochre/40' if cat=='trigger' else
+      'bg-moss/20 text-ink border-moss/40' if cat=='coping' else
+      'bg-sky/20 text-ink border-sky/40' if cat=='healing' else
+      'bg-plum/20 text-ink border-plum/40' %}
+
+    <section class="mt-8">
+      <div id="cardToSave"
+           class="bg-white rounded-xl2 p-8 shadow-glow ring-2 {{ ring }} border border-zinc-200 relative overflow-hidden">
+        <!-- corner decor -->
+        <div class="absolute -top-10 -right-10 w-32 h-32 rounded-full bg-cream opacity-70"></div>
+
+        <div class="text-[11px] uppercase tracking-widest inline-flex items-center gap-2 px-3 py-1 rounded-full border {{ badge }} mb-4">
+          <span>●</span> {{ last.category }}
+        </div>
+
+        <h3 class="font-serif text-3xl leading-tight mb-2">{{ last.title }}</h3>
+        <p class="text-zinc-600 mb-5">{{ last.subtitle }}</p>
+        <p class="text-lg leading-relaxed">{{ last.body }}</p>
+
+        {% if last.tags %}
+          <div class="mt-6 flex flex-wrap gap-2">
+            {% for tag in last.tags %}
+              <span class="text-xs bg-fog border border-zinc-300 px-2 py-1 rounded-full">#{{ tag }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="mt-4 flex items-center gap-3">
+        <button id="downloadBtn"
+                class="px-3 py-2 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50">Download PNG</button>
+        <button id="copyBtn"
+                class="px-3 py-2 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50">Copy text</button>
+      </div>
+    </section>
+  {% endif %}
+
+  {% if last %}
+  <script>
+    // Safely expose the last card to JS
+    const LAST_CARD = {{ last | tojson }};
+
+    async function copyWithFallback(text) {
+      // Try native Clipboard API (requires HTTPS or localhost)
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (_) {}
+
+      // Fallback for non-secure contexts (e.g., LAN IP)
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    document.addEventListener('click', async (e) => {
+      // PNG export
+      if (e.target.id === 'downloadBtn') {
+        const node = document.getElementById('cardToSave');
+        if (!node) return;
+        const canvas = await html2canvas(node, { backgroundColor: null, scale: 2 });
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = (LAST_CARD?.title || 'triggers-card') + '.png';
+        link.click();
+      }
+
+      // Copy text with robust fallback
+      if (e.target.id === 'copyBtn') {
+        const text = `【${LAST_CARD?.title || ''}】\n${LAST_CARD?.subtitle || ''}\n\n${LAST_CARD?.body || ''}`;
+        const ok = await copyWithFallback(text);
+        if (ok) {
+          e.target.textContent = 'Copied!';
+          setTimeout(() => (e.target.textContent = 'Copy text'), 1200);
+        } else {
+          alert('Copy failed — please select and copy manually.');
+        }
+      }
+    });
+  </script>
+  {% endif %}
+{% endblock %}
