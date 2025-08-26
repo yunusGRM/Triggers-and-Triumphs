@@ -1,27 +1,33 @@
 import os, json, re, requests, time, uuid
-from datetime import timedelta, datetime
+from datetime import timedelta
 from flask import Flask, render_template, request, session, redirect, url_for, flash
 from dotenv import load_dotenv
 import stripe
 
 load_dotenv()  # load .env locally
 
-# --- Basic config ---
+# --- App setup ---
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
-app.permanent_session_lifetime = timedelta(days=180)  # long-lived cookie
+app.permanent_session_lifetime = timedelta(days=180)
+
+# Cookie hardening (safe once deployed on HTTPS; OK locally too)
+app.config.update(
+    SESSION_COOKIE_SECURE=True,   # only send cookies over HTTPS
+    SESSION_COOKIE_SAMESITE="Lax" # good default for web apps
+)
 
 OPENAI_API_KEY  = os.environ.get("OPENAI_API_KEY", "")
 FREE_DAILY      = int(os.environ.get("FREE_DAILY", "5"))
 
 # Stripe config
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
-STRIPE_PRICE_ID   = os.environ.get("STRIPE_PRICE_ID", "")   # subscription or one-time price_xxx
+STRIPE_PRICE_ID   = os.environ.get("STRIPE_PRICE_ID", "")
 BASE_URL          = os.environ.get("BASE_URL", "http://localhost:10000")
 
-# (optional fallbacks)
-STRIPE_LINK    = os.environ.get("STRIPE_LINK", "")          # legacy payment link (optional)
-ADMIN_PRO_CODE = os.environ.get("ADMIN_PRO_CODE", "")       # manual unlock (optional)
+# Optional fallbacks
+STRIPE_LINK    = os.environ.get("STRIPE_LINK", "")
+ADMIN_PRO_CODE = os.environ.get("ADMIN_PRO_CODE", "")
 
 if not OPENAI_API_KEY:
     raise RuntimeError("Set OPENAI_API_KEY in environment.")
@@ -240,6 +246,10 @@ def buy():
             checkout_kwargs["mode"] = "subscription" if is_recurring else "payment"
 
             session_obj = stripe.checkout.Session.create(**checkout_kwargs)
+
+            # same-device guard: expect this exact checkout session to return to /pro
+            session["pending_checkout_id"] = session_obj.id
+
             return redirect(session_obj.url, code=303)
         except Exception as e:
             flash(f"Stripe error: {e}", "error")
@@ -266,40 +276,65 @@ def upgrade():
 def pro():
     """
     Landing page after Stripe success.
-    - Always enables Pro on this device.
-    - If the Checkout was one-time (mode='payment'), tag Stripe Customer with lifetime_pro=true.
-    - Save the email from Checkout on this device for convenience.
+    SECURITY:
+      - Requires a valid Stripe Checkout session_id
+      - Must match the same device's pending_checkout_id
+      - Verifies payment_status == 'paid'
+      - If one-time, marks lifetime_pro on the Stripe Customer
+      - Saves email for login restoration
     """
-    session.permanent = True
-    session["pro"] = True
+    sid = request.args.get("session_id")
+    if not sid or not STRIPE_SECRET_KEY:
+        flash("Invalid access. Please complete checkout first.", "error")
+        return redirect(url_for("upgrade"))
+
+    # same-device guard (prevents unlocking by pasting a session_id elsewhere)
+    if session.get("pending_checkout_id") != sid:
+        flash("Invalid access. Please complete checkout on this device.", "error")
+        return redirect(url_for("upgrade"))
 
     try:
-        sid = request.args.get("session_id")
-        if sid and STRIPE_SECRET_KEY:
-            chk = stripe.checkout.Session.retrieve(
-                sid, expand=["customer", "line_items", "customer_details"]
-            )
+        chk = stripe.checkout.Session.retrieve(
+            sid, expand=["customer", "line_items", "customer_details"]
+        )
 
-            # Tag lifetime for one-time purchases
-            if getattr(chk, "mode", None) == "payment" and getattr(chk, "customer", None):
-                cust_id = chk.customer.id if hasattr(chk.customer, "id") else chk.customer
-                cust = stripe.Customer.retrieve(cust_id)
-                meta = (getattr(cust, "metadata", None) or {}).copy()
-                meta["lifetime_pro"] = "true"
-                stripe.Customer.modify(cust_id, metadata=meta)
+        # Confirm payment completed
+        if chk.payment_status != "paid":
+            flash("Payment not completed. Please try again.", "error")
+            return redirect(url_for("upgrade"))
 
-            # Remember email locally (helps UI + future prefill)
-            email = None
-            if getattr(chk, "customer_details", None):
-                email = chk.customer_details.get("email")
-            if email:
-                session["email"] = email.lower()
-    except Exception:
-        # Don't block success if we cannot enrich metadata
-        pass
+        # If user is already signed in, require email match with Checkout email
+        if session.get("email") and getattr(chk, "customer_details", None):
+            checkout_email = (chk.customer_details.get("email") or "").lower()
+            if checkout_email and session["email"].lower() != checkout_email:
+                flash("This checkout used a different email. Please sign in with that email.", "error")
+                return redirect(url_for("login"))
 
-    flash("Thanks for upgrading! Pro is active.", "success")
-    return redirect(url_for("home"))
+        # Mark session as Pro
+        session.permanent = True
+        session["pro"] = True
+
+        # Tag lifetime for one-time purchases
+        if getattr(chk, "mode", None) == "payment" and getattr(chk, "customer", None):
+            cust_id = chk.customer.id if hasattr(chk.customer, "id") else chk.customer
+            cust = stripe.Customer.retrieve(cust_id)
+            meta = (getattr(cust, "metadata", None) or {}).copy()
+            meta["lifetime_pro"] = "true"
+            stripe.Customer.modify(cust_id, metadata=meta)
+
+        # Remember email locally
+        if getattr(chk, "customer_details", None) and chk.customer_details.get("email"):
+            session["email"] = chk.customer_details["email"].lower()
+
+        # Success; clear pending id
+        session.pop("pending_checkout_id", None)
+
+        flash("Thanks for upgrading! Pro is active.", "success")
+        return redirect(url_for("home"))
+
+    except Exception as e:
+        flash(f"Stripe verification failed: {e}", "error")
+        return redirect(url_for("upgrade"))
 
 # ---------- Email sign-in for cross-device Pro ----------
 
@@ -325,6 +360,11 @@ def logout():
     session.clear()
     flash("Signed out.", "success")
     return redirect(url_for("home"))
+
+# Optional health check
+@app.route("/health")
+def health():
+    return "ok", 200
 
 # --------------------------
 
