@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="glass border border-zinc-200 rounded-xl2 p-6 md:p-8 shadow-glow">
+    <h2 class="text-2xl font-serif mb-2">Upgrade to Pro</h2>
+    <p class="text-zinc-700 mb-5">Unlimited card generations + support the project.</p>
+
+    <div class="flex items-center gap-4 mb-4">
+      <a href="/buy" class="px-5 py-2 rounded-lg bg-ink text-white shadow-glow hover:opacity-90">Buy Pro</a>
+      {% if stripe_link %}
+        <a href="{{ stripe_link }}" class="text-sm underline decoration-dotted underline-offset-4">Use payment link</a>
+      {% endif %}
+    </div>
+
+    <form method="post" class="mt-2 flex items-center gap-2">
+      <input name="code" placeholder="Have an unlock code?" class="border rounded-lg p-2 w-full md:w-72 bg-white/80" />
+      <button class="px-3 py-2 rounded-lg bg-zinc-900 text-white">Unlock</button>
+    </form>
+
+    <p class="text-xs text-zinc-500 mt-4">After payment you’ll be redirected to <code>/pro</code>.</p>
+  </div>
+{% endblock %}
