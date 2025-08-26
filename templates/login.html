@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="glass border border-zinc-200 rounded-xl2 p-6 md:p-8 shadow-glow max-w-lg mx-auto">
+    <h2 class="text-2xl font-serif mb-2">Sign in</h2>
+    <p class="text-zinc-700 mb-4">
+      Use the same email you used at checkout. We’ll verify your status with Stripe and enable Pro on this device.
+    </p>
+    <form method="post" class="space-y-3">
+      <div>
+        <label class="block text-sm font-medium mb-1">Email</label>
+        <input name="email" type="email" required class="w-full border rounded-lg p-2 bg-white/80" placeholder="you@example.com" />
+      </div>
+      <button class="px-4 py-2 rounded-lg bg-ink text-white hover:opacity-90 shadow-glow">Continue</button>
+    </form>
+  </div>
+{% endblock %}
