@@ -40,7 +40,7 @@
         <label class="block text-sm font-medium mb-1">Tone</label>
         <select name="tone" class="w-full border rounded-lg p-2 bg-white/80">
           {% for t in tones or ['Classic','Sassy','Spicy','Extra Spicy'] %}
-            <option value="{{ t }}" {% if t =='Sassy' %}selected{% endif %}>{{ t }}</option>
+            <option value="{{ t }}" {% if t == 'Sassy' %}selected{% endif %}>{{ t }}</option>
           {% endfor %}
         </select>
       </div>
@@ -98,12 +98,28 @@
         {% endif %}
       </div>
 
-      <div class="mt-4 flex items-center gap-3">
+      <!-- Actions -->
+      <div class="mt-4 flex flex-wrap items-center gap-2">
         <button id="downloadBtn"
                 class="px-3 py-2 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50">Download PNG</button>
         <button id="copyBtn"
                 class="px-3 py-2 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50">Copy text</button>
+
+        <span class="mx-1 text-zinc-400">•</span>
+
+        <button id="shareX"
+                class="px-3 py-2 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50">Share on X</button>
+        <button id="shareLinkedIn"
+                class="px-3 py-2 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50">Share on LinkedIn</button>
+        <button id="copyLink"
+                class="px-3 py-2 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50">Copy link</button>
+        <button id="nativeShare"
+                class="px-3 py-2 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50">Share…</button>
       </div>
+
+      <p class="mt-2 text-xs text-zinc-500">
+        PNGs include a tiny watermark so people can find the generator. 💅
+      </p>
     </section>
   {% endif %}
 
@@ -112,16 +128,38 @@
     // Safely expose the last card to JS
     const LAST_CARD = {{ last | tojson }};
 
+    // --------- Helpers ---------
+    function buildShareText() {
+      const title = LAST_CARD?.title || '';
+      const subtitle = LAST_CARD?.subtitle || '';
+      const body = LAST_CARD?.body || '';
+      // short, tweet-friendly blurb
+      const blurb = `${title} — ${subtitle}`.trim();
+      // add a fun hashtag
+      const hash = "#TriggersAndTriumphs";
+      return `${blurb}\n\n${hash}`;
+    }
+
+    function currentPageUrl() {
+      // Clean URL without query params, plus lightweight UTM tags
+      const origin = window.location.origin;
+      const path = window.location.pathname.replace(/\/+$/, "") || "/";
+      const utm = "?utm_source=share&utm_medium=card&utm_campaign=viral";
+      return origin + path + utm;
+    }
+
+    function openNew(url) {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+
+    // Copy text fallback (works on non-HTTPS too)
     async function copyWithFallback(text) {
-      // Try native Clipboard API (requires HTTPS or localhost)
       try {
         if (navigator.clipboard && window.isSecureContext) {
           await navigator.clipboard.writeText(text);
           return true;
         }
       } catch (_) {}
-
-      // Fallback for non-secure contexts (e.g., LAN IP)
       try {
         const ta = document.createElement('textarea');
         ta.value = text;
@@ -138,27 +176,99 @@
       }
     }
 
+    // Add a subtle watermark to PNG export
+    function watermarkCanvas(canvas) {
+      const ctx = canvas.getContext('2d');
+      const pad = Math.round(canvas.width * 0.02); // 2% padding
+      const url = "triggers-and-triumphs.onrender.com";
+      ctx.save();
+      ctx.globalAlpha = 0.75;
+      ctx.font = `${Math.max(14, Math.floor(canvas.width * 0.016))}px Inter, system-ui, -apple-system, sans-serif`;
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      // background pill for readability
+      const textWidth = ctx.measureText(url).width;
+      const textHeight = Math.max(18, Math.floor(canvas.width * 0.02));
+      const x = canvas.width - textWidth - pad * 1.2;
+      const y = canvas.height - pad;
+      ctx.fillStyle = "rgba(255,255,255,0.8)";
+      const radius = Math.floor(textHeight / 2);
+      const w = textWidth + pad * 0.8;
+      const h = textHeight + pad * 0.2;
+      // rounded rect
+      ctx.beginPath();
+      ctx.moveTo(x - pad*0.4 + radius, y - h);
+      ctx.arcTo(x - pad*0.4 + w, y - h, x - pad*0.4 + w, y, radius);
+      ctx.arcTo(x - pad*0.4 + w, y, x - pad*0.4, y, radius);
+      ctx.arcTo(x - pad*0.4, y, x - pad*0.4, y - h, radius);
+      ctx.arcTo(x - pad*0.4, y - h, x - pad*0.4 + w, y - h, radius);
+      ctx.closePath();
+      ctx.fill();
+
+      // text
+      ctx.fillStyle = "rgba(0,0,0,0.8)";
+      ctx.fillText(url, x, y - h/2 + 5);
+      ctx.restore();
+      return canvas;
+    }
+
+    // --------- Actions ---------
     document.addEventListener('click', async (e) => {
-      // PNG export
+      // PNG export (with watermark)
       if (e.target.id === 'downloadBtn') {
         const node = document.getElementById('cardToSave');
         if (!node) return;
         const canvas = await html2canvas(node, { backgroundColor: null, scale: 2 });
+        watermarkCanvas(canvas);
         const link = document.createElement('a');
         link.href = canvas.toDataURL('image/png');
         link.download = (LAST_CARD?.title || 'triggers-card') + '.png';
         link.click();
       }
 
-      // Copy text with robust fallback
+      // Copy text
       if (e.target.id === 'copyBtn') {
-        const text = `【${LAST_CARD?.title || ''}】\n${LAST_CARD?.subtitle || ''}\n\n${LAST_CARD?.body || ''}`;
+        const text = `【${LAST_CARD?.title || ''}】\n${LAST_CARD?.subtitle || ''}\n\n${LAST_CARD?.body || ''}\n\n— made at triggers-and-triumphs.onrender.com`;
         const ok = await copyWithFallback(text);
-        if (ok) {
-          e.target.textContent = 'Copied!';
-          setTimeout(() => (e.target.textContent = 'Copy text'), 1200);
+        if (ok) { e.target.textContent = 'Copied!'; setTimeout(() => (e.target.textContent = 'Copy text'), 1200); }
+        else { alert('Copy failed — please select and copy manually.'); }
+      }
+
+      // Share on X/Twitter
+      if (e.target.id === 'shareX') {
+        const text = buildShareText();
+        const url = currentPageUrl();
+        const share = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`;
+        openNew(share);
+      }
+
+      // Share on LinkedIn
+      if (e.target.id === 'shareLinkedIn') {
+        const url = currentPageUrl();
+        const share = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}`;
+        openNew(share);
+      }
+
+      // Copy link
+      if (e.target.id === 'copyLink') {
+        const ok = await copyWithFallback(currentPageUrl());
+        if (ok) { e.target.textContent = 'Link copied!'; setTimeout(() => (e.target.textContent = 'Copy link'), 1200); }
+        else { alert('Copy failed — please copy the URL from the address bar.'); }
+      }
+
+      // Native share sheet (mobile & modern browsers)
+      if (e.target.id === 'nativeShare') {
+        const title = LAST_CARD?.title || 'Triggers & Triumphs';
+        const text = buildShareText();
+        const url = currentPageUrl();
+        if (navigator.share) {
+          try {
+            await navigator.share({ title, text, url });
+          } catch (_) {}
         } else {
-          alert('Copy failed — please select and copy manually.');
+          // Fallback to copying link
+          const ok = await copyWithFallback(url);
+          if (ok) { e.target.textContent = 'Link copied!'; setTimeout(() => (e.target.textContent = 'Share…'), 1200); }
+          else { openNew(url); }
         }
       }
     });
